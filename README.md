@@ -30,6 +30,9 @@ node_id=node-2 vendor=NetCorp model=S1 description=Core switch
 
 Строки также могут быть JSON-объектами в тех же секциях.
 
+Также поддерживается формат `ibdiagnet2` (файл `*.db_csv`) и связанный файл `*.sharp_an_info`.
+Если рядом с `*.db_csv` лежит `*.sharp_an_info` или оба файла находятся в одном архиве, данные из `sharp_an_info` попадут в `nodes_info.details`.
+
 ## Быстрый старт
 
 ```bash
@@ -42,12 +45,18 @@ docker compose up -d --build
 
 По умолчанию Compose публикует сервис на свободный host-порт. Если нужен фиксированный `8080`, задайте `HOST_PORT=8080` и убедитесь, что порт свободен.
 
+Проверка, что сервис жив:
+
+```bash
+curl http://localhost:PORT/healthz
+```
+
 Для локальной проверки в репозитории уже лежит пример архива: `data/example.zip`.
 
 ## Пример запроса
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/parse/ \
+curl -X POST http://localhost:PORT/api/v1/parse/ \
   -H 'Content-Type: application/json' \
   -d '{"path":"data/example.zip"}'
 ```
@@ -61,10 +70,10 @@ curl -X POST http://localhost:8080/api/v1/parse/ \
 ## curl для API
 
 ```bash
-curl http://localhost:8080/api/v1/log/1
-curl http://localhost:8080/api/v1/node/1
-curl http://localhost:8080/api/v1/port/1
-curl http://localhost:8080/api/v1/topology/1
+curl http://localhost:PORT/api/v1/log/1
+curl http://localhost:PORT/api/v1/node/1
+curl http://localhost:PORT/api/v1/port/1
+curl http://localhost:PORT/api/v1/topology/1
 ```
 
 ## Docker Compose

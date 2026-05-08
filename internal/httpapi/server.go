@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -77,32 +78,45 @@ func (s *Server) handleParse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	source, err := archive.Load(resolved)
+	sources, err := archive.LoadAll(resolved)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if len(sources) == 0 {
+		writeError(w, http.StatusBadRequest, "archive has no files")
+		return
+	}
+
+	if len(sources) == 1 && strings.HasSuffix(strings.ToLower(sources[0].Path), ".db_csv") {
+		sources = append(sources, loadSharpInfoSibling(resolved)...)
+	}
+
+	var totalSize int64
+	for _, source := range sources {
+		totalSize += source.Size
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.StartupWait)
 	defer cancel()
 
-	logID, err := s.store.CreatePendingLog(ctx, source.Path, source.Size)
+	logID, err := s.store.CreatePendingLog(ctx, sources[0].Path, totalSize)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	parsed, parseErr := parser.Parse(source.Path, source.Data)
+	parsed, parseErr := parser.ParseSources(sources)
 	if parseErr != nil {
 		_ = s.store.MarkLogRejected(ctx, logID, parseErr.Error())
-		s.logger.Error("parse failed", logger.Field{"log_id": logID, "error": parseErr.Error(), "path": source.Path, "duration_ms": time.Since(start).Milliseconds()})
+		s.logger.Error("parse failed", logger.Field{"log_id": logID, "error": parseErr.Error(), "path": sources[0].Path, "duration_ms": time.Since(start).Milliseconds()})
 		writeError(w, http.StatusUnprocessableEntity, parseErr.Error())
 		return
 	}
 
 	if err := s.store.InsertParsedLog(ctx, logID, parsed); err != nil {
 		_ = s.store.MarkLogRejected(ctx, logID, err.Error())
-		s.logger.Error("store failed", logger.Field{"log_id": logID, "error": err.Error(), "path": source.Path, "duration_ms": time.Since(start).Milliseconds()})
+		s.logger.Error("store failed", logger.Field{"log_id": logID, "error": err.Error(), "path": sources[0].Path, "duration_ms": time.Since(start).Milliseconds()})
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -112,6 +126,34 @@ func (s *Server) handleParse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]int64{"log_id": logID})
+}
+
+func loadSharpInfoSibling(path string) []archive.Source {
+	dir := filepath.Dir(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := strings.ToLower(entry.Name())
+		if !strings.HasSuffix(name, ".sharp_an_info") {
+			continue
+		}
+		fullPath := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil
+		}
+		return []archive.Source{{Path: fullPath, Data: data, Size: info.Size(), ModTime: info.ModTime()}}
+	}
+	return nil
 }
 
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
